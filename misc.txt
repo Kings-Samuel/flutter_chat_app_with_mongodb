@@ -1,0 +1,52 @@
+
+
+
+
+
+
+
+import 'dart:async';
+import 'package:flutter/material.dart';
+import 'package:provider_course2/objects/cheap_object.dart';
+import 'package:provider_course2/objects/expensive_object.dart';
+import 'package:uuid/uuid.dart';
+
+class ObjectProvider extends ChangeNotifier {
+  late String id;
+  late CheapObject _cheapObject;
+  late StreamSubscription _cheapObjectStreamSubscription;
+  late ExpensiveObject _expensiveObject;
+  late StreamSubscription _expensiveObjectStreamSubscription;
+
+  CheapObject get cheapObject => _cheapObject;
+  ExpensiveObject get expensiveObject => _expensiveObject;
+
+  ObjectProvider() {
+    id = const Uuid().v4();
+    _cheapObject = CheapObject();
+    _expensiveObject = ExpensiveObject();
+    start();
+  }
+
+  @override
+  void notifyListeners() {
+    id = const Uuid().v4();
+    super.notifyListeners();
+  }
+
+  void start() {
+    _cheapObjectStreamSubscription = Stream.periodic(const Duration(seconds: 1)).listen((event) {
+      _cheapObject = CheapObject();
+      notifyListeners();
+    });
+    _expensiveObjectStreamSubscription = Stream.periodic(const Duration(seconds: 10)).listen((event) {
+      _expensiveObject = ExpensiveObject();
+      notifyListeners();
+    });
+  }
+
+  void stop() {
+    _cheapObjectStreamSubscription.cancel();
+    _expensiveObjectStreamSubscription.cancel();
+  }
+}
