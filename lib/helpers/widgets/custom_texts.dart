@@ -12,7 +12,12 @@ Text headingText({
   );
 }
 
-Text bodyText({required String text, Color color = Colors.black, bool bold = false, double fontSize = 14, TextAlign textAlign = TextAlign.left}) {
+Text bodyText(
+    {required String text,
+    Color color = Colors.black,
+    bool bold = false,
+    double fontSize = 14,
+    TextAlign textAlign = TextAlign.left}) {
   return Text(
     text,
     textAlign: textAlign,
@@ -26,7 +31,6 @@ Text bodyText2({required String text, Color color = Colors.black, bool bold = fa
     text,
     maxLines: 2,
     overflow: TextOverflow.ellipsis,
-
     style:
         GoogleFonts.poppins(color: color, fontSize: fontSize, fontWeight: bold ? FontWeight.w500 : FontWeight.normal),
   );

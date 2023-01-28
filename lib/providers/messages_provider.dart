@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 // import 'package:byte_converter/byte_converter.dart';
 import 'package:chat_app/helpers/utils/init_mogodb.dart';
+import 'package:chat_app/helpers/utils/sec_storage.dart';
 import 'package:chat_app/models/message.dart';
 import 'package:flutter/material.dart';
 import 'package:mongo_dart/mongo_dart.dart';
@@ -106,8 +107,6 @@ class MesagesProvider extends ChangeNotifier {
     try {
       await _collection.updateOne(where.eq("id", messageId), modify.push('readReceipts', userId));
 
-      await getMessages(_roomId);
-
       return true;
     } catch (e) {
       _errorMessage = e.toString().sentenceCase;
@@ -166,5 +165,22 @@ class MesagesProvider extends ChangeNotifier {
 
   void notify() {
     notifyListeners();
+  }
+
+  Future<int> getUnreadCount(String roomId) async {
+    String? userId = await secStorage.read(key: "userId");
+    int count = 0;
+
+    final res = await _collection
+        .find(where.eq('roomId', roomId).nin("readReceipts", [userId]).excludeFields(["content"]))
+        .toList();
+
+    List<Message> messages_ = res.map((e) => Message.fromJson(e)).toList();
+
+    if (messages_.isNotEmpty) {
+      count = messages_.length;
+    }
+
+    return count;
   }
 }

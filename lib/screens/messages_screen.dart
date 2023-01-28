@@ -7,9 +7,9 @@ import 'package:better_player/better_player.dart';
 import 'package:byte_converter/byte_converter.dart';
 import 'package:chat_app/helpers/utils/color_palette.dart';
 import 'package:chat_app/helpers/utils/file_selector.dart';
-import 'package:chat_app/helpers/utils/get_video_info.dart';
 import 'package:chat_app/helpers/utils/get_video_thumbnail.dart';
 import 'package:chat_app/helpers/utils/navigator.dart';
+import 'package:chat_app/helpers/utils/sec_storage.dart';
 import 'package:chat_app/helpers/widgets/loading_animation.dart';
 import 'package:chat_app/helpers/widgets/snack_bar_helper.dart';
 import 'package:chat_app/models/chat_room.dart';
@@ -18,6 +18,7 @@ import 'package:chat_app/providers/auth_provider.dart';
 import 'package:chat_app/providers/messages_provider.dart';
 import 'package:chat_app/screens/audio_player_screen.dart';
 import 'package:chat_app/screens/other_user_profile_screen.dart';
+import 'package:chat_app/screens/video_player_screen.dart';
 import 'package:easy_image_viewer/easy_image_viewer.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -27,9 +28,11 @@ import 'package:flutter_chat_bubble/clippers/chat_bubble_clipper_1.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mongo_dart/mongo_dart.dart' as m;
 import 'package:open_filex/open_filex.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import '../helpers/utils/get_user_initials.dart';
+import '../helpers/utils/get_video_info.dart';
 import '../helpers/widgets/custom_texts.dart';
 import '../models/user.dart';
 import '../providers/chat_rooms_provider.dart';
@@ -37,6 +40,10 @@ import 'dart:math' as math;
 import 'package:path/path.dart' as path;
 
 final msBucket = PageStorageBucket(); // messages screen bucket
+saveScrollOffset(BuildContext context, double offset, String key) =>
+    msBucket.writeState(context, offset, identifier: ValueKey(key));
+double currentPageScrollOffset(BuildContext context, String key) =>
+    msBucket.readState(context, identifier: ValueKey(key)) ?? 0.0;
 
 enum OnlineStatus { online, away, offline }
 
@@ -90,24 +97,23 @@ class MessagesScreenState extends State<MessagesScreen> {
       }
     });
     _future = _mesagesProvider.getMessages(_roomId ?? '');
-    _itemPositionsListener.itemPositions.addListener(() async {
-      var positions = _itemPositionsListener.itemPositions.value;
+    // _itemPositionsListener.itemPositions.addListener(() async {
+    //   var positions = _itemPositionsListener.itemPositions.value;
 
-      for (ItemPosition position in positions) {
-        // get index
-        int index = position.index;
+    //   for (ItemPosition position in positions) {
+    //     int index = position.index;
 
-        // get the message at index
-        Message message = _mesagesProvider.messages[index];
+    //     // get the message at index
+    //     Message message = _mesagesProvider.messages[index];
 
-        bool isSeen = message.readReceipts!.contains(_authProvider.user.id);
+    //     bool isSeen = message.readReceipts!.contains(_authProvider.user.id);
 
-        // update read receipt if not seen
-        if (!isSeen) {
-          await _mesagesProvider.updateReadReceipts(messageId: message.id!, userId: _authProvider.user.id!);
-        }
-      }
-    });
+    //     // update read receipt if not seen
+    //     if (!isSeen) {
+    //       await _mesagesProvider.updateReadReceipts(messageId: message.id!, userId: _authProvider.user.id!);
+    //     }
+    //   }
+    // });
   }
 
   @override
@@ -666,372 +672,707 @@ class MessagesScreenState extends State<MessagesScreen> {
                             ),
                           );
                         } else {
-                          return ScrollablePositionedList.builder(
-                            itemCount: messages.length,
-                            physics: const BouncingScrollPhysics(),
-                            shrinkWrap: true,
-                            itemBuilder: (BuildContext context, int index) {
-                              Message message = messages[index];
-                              bool isSenderMe = message.sender!.id == _authProvider.user.id;
+                          return FutureBuilder(
+                              future: _getFirstPosIndex(),
+                              builder: (context, snapshot) {
+                                if (snapshot.connectionState == ConnectionState.waiting) {
+                                  return Container();
+                                } else {
+                                  int index = snapshot.data!;
 
-                              int previousMessageIndex = index - 1;
-                              User? previousMessageSender =
-                                  previousMessageIndex < 0 ? null : messages[previousMessageIndex].sender;
-                              bool isPreviousSenderMe = previousMessageSender?.id == _authProvider.user.id;
-
-                              Message last = messages.last;
-
-                              if (message.type == MessageType.text) {
-                                String text = message.content as String;
-                                bool isSeen = message.readReceipts!.contains(_chatPartner.id);
-
-                                return Container(
-                                  margin: EdgeInsets.only(bottom: last.id == message.id ? 120 : 0),
-                                  child: Row(
-                                    mainAxisAlignment: isSenderMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+                                  return Stack(
                                     children: [
-                                      // avatar if message is from chat partner
-                                      Visibility(
-                                          visible: !isSenderMe && isPreviousSenderMe,
-                                          child: Container(
-                                            height: 45,
-                                            width: 45,
-                                            decoration: BoxDecoration(
-                                                color: message.sender!.image != null
-                                                    ? null
-                                                    : message.sender!.listToColor(),
-                                                shape: BoxShape.circle,
-                                                image: message.sender!.image == null
-                                                    ? null
-                                                    : DecorationImage(
-                                                        image: MemoryImage(message.sender!.image!.byteList))),
-                                            child: Visibility(
-                                                visible: message.sender!.image == null,
-                                                child: bodyText(
-                                                    text: getUserInitials(message.sender!.name!), fontSize: 25)),
-                                          )),
-                                      // chat bubble && time
-                                      Column(
-                                        crossAxisAlignment:
-                                            isSenderMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                                        children: [
-                                          b.Badge(
-                                            showBadge: isSenderMe,
-                                            badgeStyle: const b.BadgeStyle(
-                                                shape: b.BadgeShape.circle, badgeColor: Colors.white),
-                                            position: b.BadgePosition.bottomEnd(end: 10),
-                                            badgeContent: ImageIcon(
-                                              const AssetImage('assets/double_check.png'),
-                                              color: isSeen ? Palette.purple : Colors.black,
-                                              size: 15,
-                                            ),
-                                            child: ChatBubble(
-                                              clipper: isSenderMe
-                                                  ? ChatBubbleClipper1(
-                                                      type: BubbleType.sendBubble,
-                                                      nipHeight: isPreviousSenderMe ? 0 : 10,
-                                                      nipWidth: isPreviousSenderMe ? 0 : 15)
-                                                  : ChatBubbleClipper1(
-                                                      type: BubbleType.receiverBubble,
-                                                      nipHeight: !isPreviousSenderMe ? 0 : 10,
-                                                      nipWidth: !isPreviousSenderMe ? 0 : 15),
-                                              alignment: isSenderMe ? Alignment.topRight : Alignment.topLeft,
-                                              margin: const EdgeInsets.all(5),
-                                              backGroundColor: isSenderMe ? Palette.green : Palette.transPurple,
-                                              child: Container(
-                                                  constraints: BoxConstraints(
-                                                    maxWidth: MediaQuery.of(context).size.width * 0.6,
-                                                  ),
-                                                  child: bodyText(
-                                                      text: text,
-                                                      fontSize: 13,
-                                                      color: isSenderMe ? Colors.white : Colors.black)),
-                                            ),
-                                          ),
-                                          Padding(
-                                            padding: const EdgeInsets.only(right: 10, left: 10, top: 5),
-                                            child: bodyText(text: message.getTime(), fontSize: 11),
-                                          )
-                                        ],
-                                      ),
-                                      // avatar if message is from user
-                                      Visibility(
-                                          visible: isSenderMe && !isPreviousSenderMe,
-                                          child: Container(
-                                            height: 45,
-                                            width: 45,
-                                            decoration: BoxDecoration(
-                                                color: message.sender!.image != null
-                                                    ? null
-                                                    : message.sender!.listToColor(),
-                                                shape: BoxShape.circle,
-                                                image: message.sender!.image == null
-                                                    ? null
-                                                    : DecorationImage(
-                                                        image: MemoryImage(message.sender!.image!.byteList))),
-                                            child: Visibility(
-                                                visible: message.sender!.image == null,
-                                                child: bodyText(
-                                                    text: getUserInitials(message.sender!.name!), fontSize: 25)),
-                                          )),
-                                    ],
-                                  ),
-                                );
-                              } else if (message.type == MessageType.image) {
-                                PictureMessage pictureMessage = message.content as PictureMessage;
-                                bool isSeen = message.readReceipts!.contains(_chatPartner.id);
+                                      ScrollablePositionedList.builder(
+                                        itemCount: messages.length,
+                                        // physics: const BouncingScrollPhysics(),
+                                        shrinkWrap: true,
+                                        itemPositionsListener: _itemPositionsListener,
+                                        itemScrollController: _itemScrollController,
+                                        initialScrollIndex: index,
+                                        itemBuilder: (BuildContext context, int index) {
+                                          Message message = messages[index];
+                                          bool isSenderMe = message.sender!.id == _authProvider.user.id;
 
-                                return Container(
-                                  margin: EdgeInsets.only(bottom: last.id == message.id ? 120 : 0),
-                                  child: Row(
-                                    mainAxisAlignment: isSenderMe ? MainAxisAlignment.end : MainAxisAlignment.start,
-                                    children: [
-                                      // avatar if message is from chat partner
-                                      Visibility(
-                                          visible: !isSenderMe && isPreviousSenderMe,
-                                          child: Container(
-                                            height: 45,
-                                            width: 45,
-                                            decoration: BoxDecoration(
-                                                color: message.sender!.image != null
-                                                    ? null
-                                                    : message.sender!.listToColor(),
-                                                shape: BoxShape.circle,
-                                                image: message.sender!.image == null
-                                                    ? null
-                                                    : DecorationImage(
-                                                        image: MemoryImage(message.sender!.image!.byteList))),
-                                            child: Visibility(
-                                                visible: message.sender!.image == null,
-                                                child: bodyText(
-                                                    text: getUserInitials(message.sender!.name!), fontSize: 25)),
-                                          )),
-                                      // chat bubble && time
-                                      Column(
-                                        crossAxisAlignment:
-                                            isSenderMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                                        children: [
-                                          b.Badge(
-                                            showBadge: isSenderMe,
-                                            badgeStyle: const b.BadgeStyle(
-                                                shape: b.BadgeShape.circle, badgeColor: Colors.white),
-                                            position: b.BadgePosition.bottomEnd(end: 10),
-                                            badgeContent: ImageIcon(
-                                              const AssetImage('assets/double_check.png'),
-                                              color: isSeen ? Palette.purple : Colors.black,
-                                              size: 15,
-                                            ),
-                                            child: ChatBubble(
-                                              clipper: isSenderMe
-                                                  ? ChatBubbleClipper1(
-                                                      type: BubbleType.sendBubble,
-                                                      nipHeight: isPreviousSenderMe ? 0 : 10,
-                                                      nipWidth: isPreviousSenderMe ? 0 : 15)
-                                                  : ChatBubbleClipper1(
-                                                      type: BubbleType.receiverBubble,
-                                                      nipHeight: !isPreviousSenderMe ? 0 : 10,
-                                                      nipWidth: !isPreviousSenderMe ? 0 : 15),
-                                              alignment: isSenderMe ? Alignment.topRight : Alignment.topLeft,
-                                              margin: const EdgeInsets.all(5),
-                                              backGroundColor: isSenderMe ? Palette.green : Palette.transPurple,
-                                              child: Container(
-                                                  constraints: BoxConstraints(
-                                                    maxWidth: MediaQuery.of(context).size.width * 0.6,
-                                                  ),
-                                                  child: Column(
-                                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                                    children: [
-                                                      InkWell(
-                                                          onTap: () {
-                                                            final imageProvider =
-                                                                Image.memory(pictureMessage.image!.byteList).image;
-                                                            showImageViewer(context, imageProvider,
-                                                                onViewerDismissed: () {});
-                                                          },
-                                                          child: Image.memory(pictureMessage.image!.byteList)),
-                                                      const SizedBox(
-                                                        height: 5,
-                                                      ),
-                                                      Align(
-                                                        alignment: Alignment.centerLeft,
-                                                        child: bodyText(
-                                                            text: pictureMessage.caption!,
-                                                            fontSize: 13,
-                                                            color: isSenderMe ? Colors.white : Colors.black),
-                                                      ),
-                                                    ],
-                                                  )),
-                                            ),
-                                          ),
-                                          Padding(
-                                            padding: const EdgeInsets.only(right: 10, left: 10, top: 5),
-                                            child: bodyText(text: message.getTime(), fontSize: 11),
-                                          )
-                                        ],
-                                      ),
-                                      // avatar if message is from user
-                                      Visibility(
-                                          visible: isSenderMe && !isPreviousSenderMe,
-                                          child: Container(
-                                            height: 45,
-                                            width: 45,
-                                            decoration: BoxDecoration(
-                                                color: message.sender!.image != null
-                                                    ? null
-                                                    : message.sender!.listToColor(),
-                                                shape: BoxShape.circle,
-                                                image: message.sender!.image == null
-                                                    ? null
-                                                    : DecorationImage(
-                                                        image: MemoryImage(message.sender!.image!.byteList))),
-                                            child: Visibility(
-                                                visible: message.sender!.image == null,
-                                                child: bodyText(
-                                                    text: getUserInitials(message.sender!.name!), fontSize: 25)),
-                                          )),
-                                    ],
-                                  ),
-                                );
-                              } else if (message.type == MessageType.audio) {
-                                AudioMessage audioMessage = message.content as AudioMessage;
-                                bool isSeen = message.readReceipts!.contains(_chatPartner.id);
+                                          int previousMessageIndex = index - 1;
+                                          User? previousMessageSender =
+                                              previousMessageIndex < 0 ? null : messages[previousMessageIndex].sender;
+                                          bool isPreviousSenderMe = previousMessageSender?.id == _authProvider.user.id;
 
-                                return Container(
-                                  margin: EdgeInsets.only(bottom: last.id == message.id ? 120 : 0),
-                                  child: Row(
-                                    mainAxisAlignment: isSenderMe ? MainAxisAlignment.end : MainAxisAlignment.start,
-                                    children: [
-                                      // avatar if message is from chat partner
-                                      Visibility(
-                                          visible: !isSenderMe && isPreviousSenderMe,
-                                          child: Container(
-                                            height: 45,
-                                            width: 45,
-                                            decoration: BoxDecoration(
-                                                color: message.sender!.image != null
-                                                    ? null
-                                                    : message.sender!.listToColor(),
-                                                shape: BoxShape.circle,
-                                                image: message.sender!.image == null
-                                                    ? null
-                                                    : DecorationImage(
-                                                        image: MemoryImage(message.sender!.image!.byteList))),
-                                            child: Visibility(
-                                                visible: message.sender!.image == null,
-                                                child: bodyText(
-                                                    text: getUserInitials(message.sender!.name!), fontSize: 25)),
-                                          )),
-                                      // chat bubble && time
-                                      Column(
-                                        crossAxisAlignment:
-                                            isSenderMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                                        children: [
-                                          b.Badge(
-                                            showBadge: isSenderMe,
-                                            badgeStyle: const b.BadgeStyle(
-                                                shape: b.BadgeShape.circle, badgeColor: Colors.white),
-                                            position: b.BadgePosition.bottomEnd(end: 10),
-                                            badgeContent: ImageIcon(
-                                              const AssetImage('assets/double_check.png'),
-                                              color: isSeen ? Palette.purple : Colors.black,
-                                              size: 15,
-                                            ),
-                                            child: ChatBubble(
-                                              clipper: isSenderMe
-                                                  ? ChatBubbleClipper1(
-                                                      type: BubbleType.sendBubble,
-                                                      nipHeight: isPreviousSenderMe ? 0 : 10,
-                                                      nipWidth: isPreviousSenderMe ? 0 : 15)
-                                                  : ChatBubbleClipper1(
-                                                      type: BubbleType.receiverBubble,
-                                                      nipHeight: !isPreviousSenderMe ? 0 : 10,
-                                                      nipWidth: !isPreviousSenderMe ? 0 : 15),
-                                              alignment: isSenderMe ? Alignment.topRight : Alignment.topLeft,
-                                              margin: const EdgeInsets.all(5),
-                                              backGroundColor: isSenderMe ? Palette.green : Palette.transPurple,
-                                              child: Container(
-                                                  constraints: BoxConstraints(
-                                                    maxWidth: MediaQuery.of(context).size.width * 0.6,
-                                                  ),
-                                                  child: Column(
-                                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                                    children: [
-                                                      bodyText(text: audioMessage.title!),
-                                                      const SizedBox(
-                                                        height: 5,
+                                          if (message.type == MessageType.text) {
+                                            String text = message.content as String;
+                                            bool isSeen = message.readReceipts!.contains(_chatPartner.id);
+
+                                            return Row(
+                                              mainAxisAlignment:
+                                                  isSenderMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+                                              children: [
+                                                // avatar if message is from chat partner
+                                                Visibility(
+                                                    visible: !isSenderMe && isPreviousSenderMe,
+                                                    child: Container(
+                                                      height: 45,
+                                                      width: 45,
+                                                      decoration: BoxDecoration(
+                                                          color: message.sender!.image != null
+                                                              ? null
+                                                              : message.sender!.listToColor(),
+                                                          shape: BoxShape.circle,
+                                                          image: message.sender!.image == null
+                                                              ? null
+                                                              : DecorationImage(
+                                                                  image: MemoryImage(message.sender!.image!.byteList))),
+                                                      child: Visibility(
+                                                          visible: message.sender!.image == null,
+                                                          child: bodyText(
+                                                              text: getUserInitials(message.sender!.name!),
+                                                              fontSize: 25)),
+                                                    )),
+                                                // chat bubble && time
+                                                Column(
+                                                  crossAxisAlignment:
+                                                      isSenderMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                                                  children: [
+                                                    b.Badge(
+                                                      showBadge: isSenderMe,
+                                                      badgeStyle: const b.BadgeStyle(
+                                                          shape: b.BadgeShape.circle, badgeColor: Colors.white),
+                                                      position: b.BadgePosition.bottomEnd(end: 10),
+                                                      badgeContent: ImageIcon(
+                                                        const AssetImage('assets/double_check.png'),
+                                                        color: isSeen ? Palette.purple : Colors.black,
+                                                        size: 15,
                                                       ),
-                                                      Container(
-                                                        height: 100,
-                                                        alignment: Alignment.center,
-                                                        decoration: BoxDecoration(
-                                                            borderRadius: BorderRadius.circular(12),
-                                                            image: const DecorationImage(
-                                                                image: AssetImage('assets/music.jpg'),
-                                                                fit: BoxFit.cover)),
-                                                        child: InkWell(
-                                                            onTap: () => pushNavigator(
-                                                                AudioPlayerScreen(
-                                                                    audioBytes: audioMessage.audio!.byteList,
-                                                                    title: audioMessage.title),
-                                                                context),
-                                                            child: const CircleAvatar(
-                                                              radius: 35,
-                                                              backgroundColor: Palette.purple,
-                                                              child: Icon(
-                                                                Icons.play_arrow,
-                                                                color: Colors.white,
-                                                                size: 50,
-                                                              ),
+                                                      child: ChatBubble(
+                                                        clipper: isSenderMe
+                                                            ? ChatBubbleClipper1(
+                                                                type: BubbleType.sendBubble,
+                                                                nipHeight: isPreviousSenderMe ? 0 : 10,
+                                                                nipWidth: isPreviousSenderMe ? 0 : 15)
+                                                            : ChatBubbleClipper1(
+                                                                type: BubbleType.receiverBubble,
+                                                                nipHeight: !isPreviousSenderMe ? 0 : 10,
+                                                                nipWidth: !isPreviousSenderMe ? 0 : 15),
+                                                        alignment: isSenderMe ? Alignment.topRight : Alignment.topLeft,
+                                                        margin: const EdgeInsets.all(5),
+                                                        backGroundColor:
+                                                            isSenderMe ? Palette.green : Palette.transPurple,
+                                                        child: Container(
+                                                            constraints: BoxConstraints(
+                                                              maxWidth: MediaQuery.of(context).size.width * 0.6,
+                                                            ),
+                                                            child: bodyText(
+                                                                text: text, fontSize: 13, color: Colors.black)),
+                                                      ),
+                                                    ),
+                                                    Padding(
+                                                      padding: const EdgeInsets.only(right: 10, left: 10, top: 5),
+                                                      child: bodyText(text: message.getTime(), fontSize: 11),
+                                                    )
+                                                  ],
+                                                ),
+                                                // avatar if message is from user
+                                                Visibility(
+                                                    visible: isSenderMe && !isPreviousSenderMe,
+                                                    child: Container(
+                                                      height: 45,
+                                                      width: 45,
+                                                      decoration: BoxDecoration(
+                                                          color: message.sender!.image != null
+                                                              ? null
+                                                              : message.sender!.listToColor(),
+                                                          shape: BoxShape.circle,
+                                                          image: message.sender!.image == null
+                                                              ? null
+                                                              : DecorationImage(
+                                                                  image: MemoryImage(message.sender!.image!.byteList))),
+                                                      child: Visibility(
+                                                          visible: message.sender!.image == null,
+                                                          child: bodyText(
+                                                              text: getUserInitials(message.sender!.name!),
+                                                              fontSize: 25)),
+                                                    )),
+                                              ],
+                                            );
+                                          } else if (message.type == MessageType.image) {
+                                            PictureMessage pictureMessage = message.content as PictureMessage;
+                                            bool isSeen = message.readReceipts!.contains(_chatPartner.id);
+
+                                            return Row(
+                                              mainAxisAlignment:
+                                                  isSenderMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+                                              children: [
+                                                // avatar if message is from chat partner
+                                                Visibility(
+                                                    visible: !isSenderMe && isPreviousSenderMe,
+                                                    child: Container(
+                                                      height: 45,
+                                                      width: 45,
+                                                      decoration: BoxDecoration(
+                                                          color: message.sender!.image != null
+                                                              ? null
+                                                              : message.sender!.listToColor(),
+                                                          shape: BoxShape.circle,
+                                                          image: message.sender!.image == null
+                                                              ? null
+                                                              : DecorationImage(
+                                                                  image: MemoryImage(message.sender!.image!.byteList))),
+                                                      child: Visibility(
+                                                          visible: message.sender!.image == null,
+                                                          child: bodyText(
+                                                              text: getUserInitials(message.sender!.name!),
+                                                              fontSize: 25)),
+                                                    )),
+                                                // chat bubble && time
+                                                Column(
+                                                  crossAxisAlignment:
+                                                      isSenderMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                                                  children: [
+                                                    b.Badge(
+                                                      showBadge: isSenderMe,
+                                                      badgeStyle: const b.BadgeStyle(
+                                                          shape: b.BadgeShape.circle, badgeColor: Colors.white),
+                                                      position: b.BadgePosition.bottomEnd(end: 10),
+                                                      badgeContent: ImageIcon(
+                                                        const AssetImage('assets/double_check.png'),
+                                                        color: isSeen ? Palette.purple : Colors.black,
+                                                        size: 15,
+                                                      ),
+                                                      child: ChatBubble(
+                                                        clipper: isSenderMe
+                                                            ? ChatBubbleClipper1(
+                                                                type: BubbleType.sendBubble,
+                                                                nipHeight: isPreviousSenderMe ? 0 : 10,
+                                                                nipWidth: isPreviousSenderMe ? 0 : 15)
+                                                            : ChatBubbleClipper1(
+                                                                type: BubbleType.receiverBubble,
+                                                                nipHeight: !isPreviousSenderMe ? 0 : 10,
+                                                                nipWidth: !isPreviousSenderMe ? 0 : 15),
+                                                        alignment: isSenderMe ? Alignment.topRight : Alignment.topLeft,
+                                                        margin: const EdgeInsets.all(5),
+                                                        backGroundColor:
+                                                            isSenderMe ? Palette.green : Palette.transPurple,
+                                                        child: Container(
+                                                            constraints: BoxConstraints(
+                                                              maxWidth: MediaQuery.of(context).size.width * 0.6,
+                                                            ),
+                                                            child: Column(
+                                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                                              children: [
+                                                                InkWell(
+                                                                    onTap: () {
+                                                                      final imageProvider =
+                                                                          Image.memory(pictureMessage.image!.byteList)
+                                                                              .image;
+                                                                      showImageViewer(context, imageProvider,
+                                                                          onViewerDismissed: () {});
+                                                                    },
+                                                                    child:
+                                                                        Image.memory(pictureMessage.image!.byteList)),
+                                                                const SizedBox(
+                                                                  height: 5,
+                                                                ),
+                                                                Align(
+                                                                  alignment: Alignment.centerLeft,
+                                                                  child: bodyText(
+                                                                      text: pictureMessage.caption!,
+                                                                      fontSize: 13,
+                                                                      color: Colors.black),
+                                                                ),
+                                                              ],
                                                             )),
                                                       ),
-                                                      const SizedBox(
-                                                        height: 5,
+                                                    ),
+                                                    Padding(
+                                                      padding: const EdgeInsets.only(right: 10, left: 10, top: 5),
+                                                      child: bodyText(text: message.getTime(), fontSize: 11),
+                                                    )
+                                                  ],
+                                                ),
+                                                // avatar if message is from user
+                                                Visibility(
+                                                    visible: isSenderMe && !isPreviousSenderMe,
+                                                    child: Container(
+                                                      height: 45,
+                                                      width: 45,
+                                                      decoration: BoxDecoration(
+                                                          color: message.sender!.image != null
+                                                              ? null
+                                                              : message.sender!.listToColor(),
+                                                          shape: BoxShape.circle,
+                                                          image: message.sender!.image == null
+                                                              ? null
+                                                              : DecorationImage(
+                                                                  image: MemoryImage(message.sender!.image!.byteList))),
+                                                      child: Visibility(
+                                                          visible: message.sender!.image == null,
+                                                          child: bodyText(
+                                                              text: getUserInitials(message.sender!.name!),
+                                                              fontSize: 25)),
+                                                    )),
+                                              ],
+                                            );
+                                          } else if (message.type == MessageType.audio) {
+                                            AudioMessage audioMessage = message.content as AudioMessage;
+                                            bool isSeen = message.readReceipts!.contains(_chatPartner.id);
+
+                                            return Row(
+                                              mainAxisAlignment:
+                                                  isSenderMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+                                              children: [
+                                                // avatar if message is from chat partner
+                                                Visibility(
+                                                    visible: !isSenderMe && isPreviousSenderMe,
+                                                    child: Container(
+                                                      height: 45,
+                                                      width: 45,
+                                                      decoration: BoxDecoration(
+                                                          color: message.sender!.image != null
+                                                              ? null
+                                                              : message.sender!.listToColor(),
+                                                          shape: BoxShape.circle,
+                                                          image: message.sender!.image == null
+                                                              ? null
+                                                              : DecorationImage(
+                                                                  image: MemoryImage(message.sender!.image!.byteList))),
+                                                      child: Visibility(
+                                                          visible: message.sender!.image == null,
+                                                          child: bodyText(
+                                                              text: getUserInitials(message.sender!.name!),
+                                                              fontSize: 25)),
+                                                    )),
+                                                // chat bubble && time
+                                                Column(
+                                                  crossAxisAlignment:
+                                                      isSenderMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                                                  children: [
+                                                    b.Badge(
+                                                      showBadge: isSenderMe,
+                                                      badgeStyle: const b.BadgeStyle(
+                                                          shape: b.BadgeShape.circle, badgeColor: Colors.white),
+                                                      position: b.BadgePosition.bottomEnd(end: 10),
+                                                      badgeContent: ImageIcon(
+                                                        const AssetImage('assets/double_check.png'),
+                                                        color: isSeen ? Palette.purple : Colors.black,
+                                                        size: 15,
                                                       ),
-                                                      Align(
-                                                        alignment: Alignment.centerLeft,
-                                                        child: bodyText(
-                                                            text: audioMessage.caption!,
-                                                            fontSize: 13,
-                                                            color: isSenderMe ? Colors.white : Colors.black),
+                                                      child: ChatBubble(
+                                                        clipper: isSenderMe
+                                                            ? ChatBubbleClipper1(
+                                                                type: BubbleType.sendBubble,
+                                                                nipHeight: isPreviousSenderMe ? 0 : 10,
+                                                                nipWidth: isPreviousSenderMe ? 0 : 15)
+                                                            : ChatBubbleClipper1(
+                                                                type: BubbleType.receiverBubble,
+                                                                nipHeight: !isPreviousSenderMe ? 0 : 10,
+                                                                nipWidth: !isPreviousSenderMe ? 0 : 15),
+                                                        alignment: isSenderMe ? Alignment.topRight : Alignment.topLeft,
+                                                        margin: const EdgeInsets.all(5),
+                                                        backGroundColor:
+                                                            isSenderMe ? Palette.green : Palette.transPurple,
+                                                        child: Container(
+                                                            constraints: BoxConstraints(
+                                                              maxWidth: MediaQuery.of(context).size.width * 0.6,
+                                                            ),
+                                                            child: Column(
+                                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                                              children: [
+                                                                bodyText(text: audioMessage.title!, fontSize: 12),
+                                                                const SizedBox(
+                                                                  height: 5,
+                                                                ),
+                                                                Container(
+                                                                  height: 100,
+                                                                  alignment: Alignment.center,
+                                                                  decoration: BoxDecoration(
+                                                                      borderRadius: BorderRadius.circular(12),
+                                                                      image: const DecorationImage(
+                                                                          image: AssetImage('assets/music.jpg'),
+                                                                          fit: BoxFit.cover)),
+                                                                  child: InkWell(
+                                                                      onTap: () => pushNavigator(
+                                                                          AudioPlayerScreen(
+                                                                              audioBytes: audioMessage.audio!.byteList,
+                                                                              title: audioMessage.title),
+                                                                          context),
+                                                                      child: const CircleAvatar(
+                                                                        radius: 35,
+                                                                        backgroundColor: Palette.purple,
+                                                                        child: Icon(
+                                                                          Icons.play_arrow,
+                                                                          color: Colors.white,
+                                                                          size: 50,
+                                                                        ),
+                                                                      )),
+                                                                ),
+                                                                const SizedBox(
+                                                                  height: 5,
+                                                                ),
+                                                                Align(
+                                                                  alignment: Alignment.centerLeft,
+                                                                  child: bodyText(
+                                                                      text: audioMessage.caption!,
+                                                                      fontSize: 13,
+                                                                      color: Colors.black),
+                                                                ),
+                                                              ],
+                                                            )),
                                                       ),
-                                                    ],
-                                                  )),
-                                            ),
-                                          ),
-                                          Padding(
-                                            padding: const EdgeInsets.only(right: 10, left: 10, top: 5),
-                                            child: bodyText(text: message.getTime(), fontSize: 11),
-                                          )
-                                        ],
+                                                    ),
+                                                    Padding(
+                                                      padding: const EdgeInsets.only(right: 10, left: 10, top: 5),
+                                                      child: bodyText(text: message.getTime(), fontSize: 11),
+                                                    )
+                                                  ],
+                                                ),
+                                                // avatar if message is from user
+                                                Visibility(
+                                                    visible: isSenderMe && !isPreviousSenderMe,
+                                                    child: Container(
+                                                      height: 45,
+                                                      width: 45,
+                                                      decoration: BoxDecoration(
+                                                          color: message.sender!.image != null
+                                                              ? null
+                                                              : message.sender!.listToColor(),
+                                                          shape: BoxShape.circle,
+                                                          image: message.sender!.image == null
+                                                              ? null
+                                                              : DecorationImage(
+                                                                  image: MemoryImage(message.sender!.image!.byteList))),
+                                                      child: Visibility(
+                                                          visible: message.sender!.image == null,
+                                                          child: bodyText(
+                                                              text: getUserInitials(message.sender!.name!),
+                                                              fontSize: 25)),
+                                                    )),
+                                              ],
+                                            );
+                                          } else if (message.type == MessageType.document) {
+                                            DocumentMessage doc = message.content as DocumentMessage;
+                                            bool isSeen = message.readReceipts!.contains(_chatPartner.id);
+
+                                            return Row(
+                                              mainAxisAlignment:
+                                                  isSenderMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+                                              children: [
+                                                // avatar if message is from chat partner
+                                                Visibility(
+                                                    visible: !isSenderMe && isPreviousSenderMe,
+                                                    child: Container(
+                                                      height: 45,
+                                                      width: 45,
+                                                      decoration: BoxDecoration(
+                                                          color: message.sender!.image != null
+                                                              ? null
+                                                              : message.sender!.listToColor(),
+                                                          shape: BoxShape.circle,
+                                                          image: message.sender!.image == null
+                                                              ? null
+                                                              : DecorationImage(
+                                                                  image: MemoryImage(message.sender!.image!.byteList))),
+                                                      child: Visibility(
+                                                          visible: message.sender!.image == null,
+                                                          child: bodyText(
+                                                              text: getUserInitials(message.sender!.name!),
+                                                              fontSize: 25)),
+                                                    )),
+                                                // chat bubble && time
+                                                Column(
+                                                  crossAxisAlignment:
+                                                      isSenderMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                                                  children: [
+                                                    b.Badge(
+                                                      showBadge: isSenderMe,
+                                                      badgeStyle: const b.BadgeStyle(
+                                                          shape: b.BadgeShape.circle, badgeColor: Colors.white),
+                                                      position: b.BadgePosition.bottomEnd(end: 10),
+                                                      badgeContent: ImageIcon(
+                                                        const AssetImage('assets/double_check.png'),
+                                                        color: isSeen ? Palette.purple : Colors.black,
+                                                        size: 15,
+                                                      ),
+                                                      child: ChatBubble(
+                                                        clipper: isSenderMe
+                                                            ? ChatBubbleClipper1(
+                                                                type: BubbleType.sendBubble,
+                                                                nipHeight: isPreviousSenderMe ? 0 : 10,
+                                                                nipWidth: isPreviousSenderMe ? 0 : 15)
+                                                            : ChatBubbleClipper1(
+                                                                type: BubbleType.receiverBubble,
+                                                                nipHeight: !isPreviousSenderMe ? 0 : 10,
+                                                                nipWidth: !isPreviousSenderMe ? 0 : 15),
+                                                        alignment: isSenderMe ? Alignment.topRight : Alignment.topLeft,
+                                                        margin: const EdgeInsets.all(5),
+                                                        backGroundColor:
+                                                            isSenderMe ? Palette.green : Palette.transPurple,
+                                                        child: Container(
+                                                            constraints: BoxConstraints(
+                                                              maxWidth: MediaQuery.of(context).size.width * 0.6,
+                                                            ),
+                                                            child: Column(
+                                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                                              children: [
+                                                                bodyText(text: doc.title!, fontSize: 12),
+                                                                const SizedBox(
+                                                                  height: 5,
+                                                                ),
+                                                                InkWell(
+                                                                  onTap: () async {
+                                                                    Directory appDocDir =
+                                                                        await getApplicationDocumentsDirectory();
+                                                                    String appDocPath = appDocDir.path;
+
+                                                                    File file = File('$appDocPath/${doc.title}');
+                                                                    await file.writeAsBytes(doc.doc!.byteList);
+                                                                    OpenFilex.open(file.path);
+                                                                  },
+                                                                  child: const Center(
+                                                                    child: Icon(
+                                                                      Icons.file_open,
+                                                                      color: Colors.grey,
+                                                                      size: 100,
+                                                                    ),
+                                                                  ),
+                                                                ),
+                                                                const SizedBox(
+                                                                  height: 5,
+                                                                ),
+                                                                Align(
+                                                                  alignment: Alignment.centerLeft,
+                                                                  child: bodyText(
+                                                                      text: doc.caption!,
+                                                                      fontSize: 13,
+                                                                      color: Colors.black),
+                                                                ),
+                                                              ],
+                                                            )),
+                                                      ),
+                                                    ),
+                                                    Padding(
+                                                      padding: const EdgeInsets.only(right: 10, left: 10, top: 5),
+                                                      child: bodyText(text: message.getTime(), fontSize: 11),
+                                                    )
+                                                  ],
+                                                ),
+                                                // avatar if message is from user
+                                                Visibility(
+                                                    visible: isSenderMe && !isPreviousSenderMe,
+                                                    child: Container(
+                                                      height: 45,
+                                                      width: 45,
+                                                      decoration: BoxDecoration(
+                                                          color: message.sender!.image != null
+                                                              ? null
+                                                              : message.sender!.listToColor(),
+                                                          shape: BoxShape.circle,
+                                                          image: message.sender!.image == null
+                                                              ? null
+                                                              : DecorationImage(
+                                                                  image: MemoryImage(message.sender!.image!.byteList))),
+                                                      child: Visibility(
+                                                          visible: message.sender!.image == null,
+                                                          child: bodyText(
+                                                              text: getUserInitials(message.sender!.name!),
+                                                              fontSize: 25)),
+                                                    )),
+                                              ],
+                                            );
+                                          } else if (message.type == MessageType.video) {
+                                            VideoMessage video = message.content as VideoMessage;
+                                            bool isSeen = message.readReceipts!.contains(_chatPartner.id);
+
+                                            return Row(
+                                              mainAxisAlignment:
+                                                  isSenderMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+                                              children: [
+                                                // avatar if message is from chat partner
+                                                Visibility(
+                                                    visible: !isSenderMe && isPreviousSenderMe,
+                                                    child: Container(
+                                                      height: 45,
+                                                      width: 45,
+                                                      decoration: BoxDecoration(
+                                                          color: message.sender!.image != null
+                                                              ? null
+                                                              : message.sender!.listToColor(),
+                                                          shape: BoxShape.circle,
+                                                          image: message.sender!.image == null
+                                                              ? null
+                                                              : DecorationImage(
+                                                                  image: MemoryImage(message.sender!.image!.byteList))),
+                                                      child: Visibility(
+                                                          visible: message.sender!.image == null,
+                                                          child: bodyText(
+                                                              text: getUserInitials(message.sender!.name!),
+                                                              fontSize: 25)),
+                                                    )),
+                                                //chat bubble && time
+                                                Column(
+                                                  crossAxisAlignment:
+                                                      isSenderMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                                                  children: [
+                                                    b.Badge(
+                                                      showBadge: isSenderMe && video.caption!.isEmpty,
+                                                      badgeStyle: const b.BadgeStyle(
+                                                          shape: b.BadgeShape.circle, badgeColor: Colors.white),
+                                                      position: b.BadgePosition.bottomEnd(end: 10),
+                                                      badgeContent: ImageIcon(
+                                                        const AssetImage('assets/double_check.png'),
+                                                        color: isSeen ? Palette.purple : Colors.black,
+                                                        size: 15,
+                                                      ),
+                                                      child: FutureBuilder(
+                                                        future: videoBytesToFile(video, message.id!),
+                                                        builder: (context, snapshot) {
+                                                          if (snapshot.connectionState == ConnectionState.waiting) {
+                                                            return Container();
+                                                          } else {
+                                                            File file = snapshot.data!;
+
+                                                            return Container(
+                                                              height: 200,
+                                                              width: MediaQuery.of(context).size.width * 0.5,
+                                                              alignment: Alignment.center,
+                                                              decoration: BoxDecoration(
+                                                                  borderRadius: BorderRadius.circular(12),
+                                                                  image: DecorationImage(
+                                                                      fit: BoxFit.fitHeight,
+                                                                      image: MemoryImage(video.thumbnail!.byteList))),
+                                                              child: InkWell(
+                                                                  onTap: () => pushNavigator(
+                                                                      VideoPlayerScreen(path: file.path), context),
+                                                                  child: Container(
+                                                                    height: 50,
+                                                                    width: 50,
+                                                                    alignment: Alignment.center,
+                                                                    decoration: const BoxDecoration(
+                                                                        color: Palette.purple, shape: BoxShape.circle),
+                                                                    child: const Icon(
+                                                                      Icons.play_arrow,
+                                                                      size: 35,
+                                                                      color: Colors.white,
+                                                                    ),
+                                                                  )),
+                                                            );
+                                                          }
+                                                        },
+                                                      ),
+                                                    ),
+                                                    Visibility(
+                                                      visible: video.caption!.isNotEmpty,
+                                                      child: b.Badge(
+                                                        showBadge: isSenderMe,
+                                                        badgeStyle: const b.BadgeStyle(
+                                                            shape: b.BadgeShape.circle, badgeColor: Colors.white),
+                                                        position: b.BadgePosition.bottomEnd(end: 10),
+                                                        badgeContent: ImageIcon(
+                                                          const AssetImage('assets/double_check.png'),
+                                                          color: isSeen ? Palette.purple : Colors.black,
+                                                          size: 15,
+                                                        ),
+                                                        child: ChatBubble(
+                                                          clipper: isSenderMe
+                                                              ? ChatBubbleClipper1(
+                                                                  type: BubbleType.sendBubble,
+                                                                  nipHeight: isPreviousSenderMe ? 0 : 10,
+                                                                  nipWidth: isPreviousSenderMe ? 0 : 15)
+                                                              : ChatBubbleClipper1(
+                                                                  type: BubbleType.receiverBubble,
+                                                                  nipHeight: !isPreviousSenderMe ? 0 : 10,
+                                                                  nipWidth: !isPreviousSenderMe ? 0 : 15),
+                                                          alignment:
+                                                              isSenderMe ? Alignment.topRight : Alignment.topLeft,
+                                                          margin: const EdgeInsets.all(5),
+                                                          backGroundColor:
+                                                              isSenderMe ? Palette.green : Palette.transPurple,
+                                                          child: Container(
+                                                            constraints: BoxConstraints(
+                                                              maxWidth: MediaQuery.of(context).size.width * 0.6,
+                                                            ),
+                                                            child: Align(
+                                                              alignment: Alignment.centerLeft,
+                                                              child: bodyText(
+                                                                  text: video.caption!,
+                                                                  fontSize: 13,
+                                                                  color: Colors.black),
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ),
+                                                    Padding(
+                                                      padding: EdgeInsets.only(
+                                                          right: 10, left: 10, top: video.caption!.isEmpty ? 0 : 5),
+                                                      child: bodyText(text: message.getTime(), fontSize: 11),
+                                                    )
+                                                  ],
+                                                ),
+                                                // avatar if message is from user
+                                                Visibility(
+                                                    visible: isSenderMe && !isPreviousSenderMe,
+                                                    child: Container(
+                                                      height: 45,
+                                                      width: 45,
+                                                      decoration: BoxDecoration(
+                                                          color: message.sender!.image != null
+                                                              ? null
+                                                              : message.sender!.listToColor(),
+                                                          shape: BoxShape.circle,
+                                                          image: message.sender!.image == null
+                                                              ? null
+                                                              : DecorationImage(
+                                                                  image: MemoryImage(message.sender!.image!.byteList))),
+                                                      child: Visibility(
+                                                          visible: message.sender!.image == null,
+                                                          child: bodyText(
+                                                              text: getUserInitials(message.sender!.name!),
+                                                              fontSize: 25)),
+                                                    )),
+                                              ],
+                                            );
+                                          } else {
+                                            return Container();
+                                          }
+                                        },
                                       ),
-                                      // avatar if message is from user
-                                      Visibility(
-                                          visible: isSenderMe && !isPreviousSenderMe,
-                                          child: Container(
-                                            height: 45,
-                                            width: 45,
-                                            decoration: BoxDecoration(
-                                                color: message.sender!.image != null
-                                                    ? null
-                                                    : message.sender!.listToColor(),
-                                                shape: BoxShape.circle,
-                                                image: message.sender!.image == null
-                                                    ? null
-                                                    : DecorationImage(
-                                                        image: MemoryImage(message.sender!.image!.byteList))),
-                                            child: Visibility(
-                                                visible: message.sender!.image == null,
-                                                child: bodyText(
-                                                    text: getUserInitials(message.sender!.name!), fontSize: 25)),
-                                          )),
+                                      ValueListenableBuilder<Iterable<ItemPosition>>(
+                                        valueListenable: _itemPositionsListener.itemPositions,
+                                        builder: (context, positions, child) {
+                                          //! #1. find the last item on the screen and save its index to sec-storage
+                                          int? lastItem;
+                                          if (positions.isNotEmpty) {
+                                            lastItem = positions
+                                                .where((ItemPosition position) => position.itemLeadingEdge < 1)
+                                                .reduce((ItemPosition last, ItemPosition position) =>
+                                                    position.itemLeadingEdge > last.itemLeadingEdge ? position : last)
+                                                .index;
+                                          }
+
+                                          secStorage.write(key: _chatPartner.id!, value: lastItem.toString());
+
+                                          //! #2. update last seen
+                                          for (ItemPosition position in positions) {
+                                            int index = position.index;
+
+                                            // get the message at index
+                                            Message message = _mesagesProvider.messages[index];
+
+                                            bool isSeen = message.readReceipts!.contains(_authProvider.user.id);
+
+                                            // update read receipt if not seen
+                                            if (!isSeen) {
+                                              _mesagesProvider.updateReadReceipts(
+                                                  messageId: message.id!, userId: _authProvider.user.id!);
+                                            }
+                                          }
+
+                                          return const SizedBox.shrink();
+                                        },
+                                      )
                                     ],
-                                  ),
-                                );
-                              } else {
-                                return Container();
-                              }
-                            },
-                          );
+                                  );
+                                }
+                              });
                         }
                       },
                     );
@@ -1261,5 +1602,26 @@ class MessagesScreenState extends State<MessagesScreen> {
     final sizeInMB = converter.megaBytes;
 
     return sizeInMB.toInt();
+  }
+
+  Future<File> videoBytesToFile(VideoMessage video, String id) async {
+    Directory appDocDir = await getApplicationDocumentsDirectory();
+    String appDocPath = appDocDir.path;
+
+    File file = File('$appDocPath/$id');
+    await file.writeAsBytes(video.video!.byteList);
+
+    return file;
+  }
+
+  Future<int> _getFirstPosIndex() async {
+    String? indexString = await secStorage.read(key: _chatPartner.id!);
+
+    if (indexString == null || indexString == 'null') {
+      indexString = '0';
+    }
+
+    int index = int.parse(indexString);
+    return index;
   }
 }

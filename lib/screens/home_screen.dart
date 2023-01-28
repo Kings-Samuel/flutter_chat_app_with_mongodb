@@ -7,6 +7,7 @@ import 'package:chat_app/helpers/widgets/loading_animation.dart';
 import 'package:chat_app/models/message.dart';
 import 'package:chat_app/models/user.dart';
 import 'package:chat_app/providers/chat_rooms_provider.dart';
+import 'package:chat_app/providers/messages_provider.dart';
 import 'package:chat_app/screens/messages_screen.dart';
 import 'package:chat_app/screens/profile_screen.dart';
 import 'package:chat_app/screens/search_users_screen.dart';
@@ -202,30 +203,32 @@ class HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMix
                                           child: Row(
                                             children: [
                                               // image
-                                              SizedBox(
-                                                height: 60,
-                                                width: 60,
-                                                child: FittedBox(
-                                                  child: Hero(
-                                                    tag: user.username!,
-                                                    child: Container(
-                                                      height: 100,
-                                                      width: 100,
-                                                      alignment: Alignment.center,
-                                                      decoration: image == null
-                                                          ? BoxDecoration(
-                                                              shape: BoxShape.circle, color: user.listToColor())
-                                                          : BoxDecoration(
-                                                              shape: BoxShape.circle,
-                                                              image: DecorationImage(
-                                                                  image: MemoryImage(image), fit: BoxFit.fill)),
-                                                      child: image != null
-                                                          ? null
-                                                          : Center(
-                                                              child: headingText(
-                                                                  text: getUserInitials(user.name!),
-                                                                  color: Colors.white,
-                                                                  fontSize: 50)),
+                                              Expanded(
+                                                child: SizedBox(
+                                                  height: 60,
+                                                  width: 60,
+                                                  child: FittedBox(
+                                                    child: Hero(
+                                                      tag: user.username!,
+                                                      child: Container(
+                                                        height: 100,
+                                                        width: 100,
+                                                        alignment: Alignment.center,
+                                                        decoration: image == null
+                                                            ? BoxDecoration(
+                                                                shape: BoxShape.circle, color: user.listToColor())
+                                                            : BoxDecoration(
+                                                                shape: BoxShape.circle,
+                                                                image: DecorationImage(
+                                                                    image: MemoryImage(image), fit: BoxFit.fill)),
+                                                        child: image != null
+                                                            ? null
+                                                            : Center(
+                                                                child: headingText(
+                                                                    text: getUserInitials(user.name!),
+                                                                    color: Colors.white,
+                                                                    fontSize: 50)),
+                                                      ),
                                                     ),
                                                   ),
                                                 ),
@@ -233,64 +236,90 @@ class HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMix
                                               const SizedBox(
                                                 width: 8,
                                               ),
-                                              // user name and message
                                               SizedBox(
                                                 height: 70,
+                                                width: MediaQuery.of(context).size.width * 0.7,
                                                 child: Column(
                                                   crossAxisAlignment: CrossAxisAlignment.start,
                                                   children: [
-                                                    Align(
-                                                        alignment: Alignment.centerLeft,
-                                                        child: bodyText(text: user.name!, fontSize: 16, bold: true)),
-                                                    Center(
-                                                      child: Row(
-                                                        children: [
-                                                          Visibility(
-                                                            visible: lastMessage.noOfFiles! > 0 &&
-                                                                lastMessage.type != MessageType.none,
-                                                            child: Icon(
-                                                              lastMessage.type == MessageType.image
-                                                                  ? Icons.photo
-                                                                  : lastMessage.type == MessageType.audio
-                                                                      ? Icons.headphones
-                                                                      : lastMessage.type == MessageType.video
-                                                                          ? Icons.video_camera_back
-                                                                          : CupertinoIcons.doc_fill,
-                                                              color: Colors.black,
-                                                              size: 25,
+                                                    // username and time
+                                                    Row(
+                                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                                      children: [
+                                                        Align(
+                                                            alignment: Alignment.centerLeft,
+                                                            child:
+                                                                bodyText(text: user.name!, fontSize: 16, bold: true)),
+                                                        bodyText(text: lastMessage.dateTime())
+                                                      ],
+                                                    ),
+                                                    // message and unread count
+                                                    Row(
+                                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                                      children: [
+                                                        Row(
+                                                          children: [
+                                                            Visibility(
+                                                              visible: lastMessage.noOfFiles! > 0 &&
+                                                                  lastMessage.type != MessageType.none,
+                                                              child: Icon(
+                                                                lastMessage.type == MessageType.image
+                                                                    ? Icons.photo
+                                                                    : lastMessage.type == MessageType.audio
+                                                                        ? Icons.headphones
+                                                                        : lastMessage.type == MessageType.video
+                                                                            ? Icons.video_camera_back
+                                                                            : CupertinoIcons.doc_fill,
+                                                                color: Colors.black,
+                                                                size: 25,
+                                                              ),
                                                             ),
-                                                          ),
-                                                          Visibility(
-                                                            visible: lastMessage.noOfFiles! > 0,
-                                                            child: const SizedBox(
-                                                              width: 5,
+                                                            Visibility(
+                                                              visible: lastMessage.noOfFiles! > 0,
+                                                              child: const SizedBox(
+                                                                width: 5,
+                                                              ),
                                                             ),
-                                                          ),
-                                                          SizedBox(
-                                                              width: lastMessage.noOfFiles! > 0
-                                                                  ? MediaQuery.of(context).size.width - 200
-                                                                  : MediaQuery.of(context).size.width - 170,
-                                                              child: bodyText2(
-                                                                  text: lastMessage.message!.isEmpty
-                                                                      ? EnumToString.convertToString(lastMessage.type)
-                                                                          .sentenceCase
-                                                                      : lastMessage.message!))
-                                                        ],
-                                                      ),
+                                                            SizedBox(
+                                                                width: lastMessage.noOfFiles! > 0
+                                                                    ? MediaQuery.of(context).size.width - 200
+                                                                    : MediaQuery.of(context).size.width - 170,
+                                                                child: bodyText2(
+                                                                    text: lastMessage.message!.isEmpty
+                                                                        ? EnumToString.convertToString(lastMessage.type)
+                                                                            .sentenceCase
+                                                                        : lastMessage.message!))
+                                                          ],
+                                                        ),
+                                                        FutureBuilder(
+                                                          future:
+                                                              context.read<MesagesProvider>().getUnreadCount(room.id!),
+                                                          builder: (context, snapshot) {
+                                                            if (snapshot.connectionState == ConnectionState.waiting ||
+                                                                snapshot.data == 0) {
+                                                              return Container();
+                                                            } else {
+                                                              return Container(
+                                                                  margin: const EdgeInsets.only(left: 5),
+                                                                  height: 25,
+                                                                  width: 35,
+                                                                  alignment: Alignment.center,
+                                                                  decoration: BoxDecoration(
+                                                                    color: Palette.purple,
+                                                                    shape: BoxShape.rectangle,
+                                                                    borderRadius: BorderRadius.circular(10),
+                                                                  ),
+                                                                  child: bodyText(
+                                                                      text: snapshot.data.toString(),
+                                                                      color: Colors.white));
+                                                            }
+                                                          },
+                                                        ),
+                                                      ],
                                                     ),
                                                   ],
                                                 ),
                                               ),
-                                              // last message time and unread message count
-                                              Container(
-                                                height: 60,
-                                                width: 60,
-                                                alignment: Alignment.center,
-                                                child: Column(
-                                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                                  children: [FittedBox(child: bodyText(text: lastMessage.dateTime()))],
-                                                ),
-                                              )
                                             ],
                                           ),
                                         ),

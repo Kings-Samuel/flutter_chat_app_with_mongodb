@@ -35,6 +35,7 @@ dependencies:
   ms_material_color: ^1.0.0
   open_filex: ^4.3.2
   path: ^1.8.2
+  path_provider: ^2.0.12
   provider: ^6.0.5
   recase: ^4.1.0
   scrollable_positioned_list: ^0.3.5
